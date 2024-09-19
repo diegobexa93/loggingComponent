@@ -1,4 +1,6 @@
-﻿namespace RequestLoggingMiddlewareLib.Models
+﻿using System.Text.Json;
+
+namespace RequestLoggingMiddlewareLib.Models
 {
     public class TraceRequestEvent: IntegrationBaseEvent
     {
@@ -16,6 +18,11 @@
         public Dictionary<string, string?> RequestHeaders { get; set; }
         public string? RequestBody { get; set; }
         public TraceResponseEvent TraceResponse { get; set; }
+
+        public string ToJson()
+        {
+            return JsonSerializer.Serialize(this);
+        }
     }
 
     public class TraceResponseEvent

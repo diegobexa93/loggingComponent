@@ -1,7 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.Extensions.Logging;
-using RequestLoggingMiddlewareLib.Interface;
+using RabbitMQ.Client;
 using RequestLoggingMiddlewareLib.Models;
 using System.Text;
 
@@ -12,13 +12,15 @@ namespace RequestLoggingMiddlewareLib
     {
         private readonly RequestDelegate _next;
         private readonly ILogger<RequestLoggingMiddleware> _logger;
-        private readonly IMessageBrokerLog _messageBrokerLog;
+        private readonly RabbitMqConfig _rabbitMqConfig;
 
-        public RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> logger, IMessageBrokerLog messageBrokerLog)
+        public RequestLoggingMiddleware(RequestDelegate next, 
+                                        ILogger<RequestLoggingMiddleware> logger,
+                                        RabbitMqConfig rabbitMqConfig)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _messageBrokerLog = messageBrokerLog ?? throw new ArgumentNullException(nameof(messageBrokerLog));
+            _rabbitMqConfig = rabbitMqConfig ?? throw new ArgumentNullException(nameof(rabbitMqConfig));
         }
 
         public async Task Invoke(HttpContext context)
@@ -47,8 +49,14 @@ namespace RequestLoggingMiddlewareLib
                     await responseBody.CopyToAsync(originalResponseBody);
                 }
 
-                // Send log to the message broker
-                await _messageBrokerLog.CreateTraceUserAPI(traceRequestEvent);
+                try
+                {
+                    await SendMessageToRabbitMq(traceRequestEvent);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error sending message to RabbitMQ");
+                }
             }
             catch (Exception ex)
             {
@@ -106,6 +114,28 @@ namespace RequestLoggingMiddlewareLib
             context.Response.Body.Seek(0, SeekOrigin.Begin);
             traceRequestEvent.TraceResponse.ResponseBody = await new StreamReader(context.Response.Body).ReadToEndAsync();
             context.Response.Body.Seek(0, SeekOrigin.Begin);
+        }
+
+        private async Task SendMessageToRabbitMq(TraceRequestEvent traceRequestEvent)
+        {
+            var factory = new ConnectionFactory() { Uri = new Uri(_rabbitMqConfig.ConnectionString) };
+            using (var connection = factory.CreateConnection())
+            using (var channel = connection.CreateModel())
+            {
+                channel.QueueDeclare(queue: _rabbitMqConfig.QueueName,
+                                     durable: false,
+                                     exclusive: false,
+                                     autoDelete: false,
+                                     arguments: null);
+
+                var message = Encoding.UTF8.GetBytes(traceRequestEvent.ToJson());
+
+                await Task.Run(() => channel.BasicPublish(exchange: "",
+                                     routingKey: _rabbitMqConfig.QueueName,
+                                     basicProperties: null,
+                                     body: message));
+
+            }
         }
     }
 }
