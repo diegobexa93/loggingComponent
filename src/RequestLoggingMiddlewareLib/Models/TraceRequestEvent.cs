@@ -19,10 +19,6 @@ namespace RequestLoggingMiddlewareLib.Models
         public string? RequestBody { get; set; }
         public TraceResponseEvent TraceResponse { get; set; }
 
-        public string ToJson()
-        {
-            return JsonSerializer.Serialize(this);
-        }
     }
 
     public class TraceResponseEvent
