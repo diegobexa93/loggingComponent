@@ -13,13 +13,17 @@ namespace RequestLoggingMiddlewareLib.Middleware
         private readonly RequestDelegate _next;
         private readonly ILogger<RequestLoggingMiddleware> _logger;
         private readonly IRabbitMQPublisher<TraceRequestEvent> _rabbitMQPublisher;
+        private readonly RabbitMqLoggingConfig _rabbitMqLoggingConfig;
+
         public RequestLoggingMiddleware(RequestDelegate next,
                                         ILogger<RequestLoggingMiddleware> logger,
-                                        IRabbitMQPublisher<TraceRequestEvent> rabbitMQPublisher)
+                                        IRabbitMQPublisher<TraceRequestEvent> rabbitMQPublisher,
+                                        RabbitMqLoggingConfig rabbitMqLoggingConfig)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _rabbitMQPublisher = rabbitMQPublisher ?? throw new ArgumentNullException(nameof(rabbitMQPublisher));
+            _rabbitMqLoggingConfig = rabbitMqLoggingConfig;
         }
 
         public async Task Invoke(HttpContext context)
@@ -50,7 +54,7 @@ namespace RequestLoggingMiddlewareLib.Middleware
 
                 try
                 {
-                    await _rabbitMQPublisher.PublishMessageAsync(traceRequestEvent);
+                    await _rabbitMQPublisher.PublishMessageAsync(traceRequestEvent, _rabbitMqLoggingConfig.QueueNameTrace);
                 }
                 catch (Exception ex)
                 {

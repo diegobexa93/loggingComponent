@@ -15,14 +15,14 @@ namespace RequestLoggingMiddlewareLib.RabbitMQ
             _rabbitMqLoggingConfig = rabbitMqLoggingConfig;
         }
 
-        public async Task PublishMessageAsync(T message)
+        public async Task PublishMessageAsync(T message, string queueName)
         {
 
             var factory = new ConnectionFactory() { Uri = new Uri(_rabbitMqLoggingConfig.ConnectionString) };
             using (var connection = factory.CreateConnection())
             using (var channel = connection.CreateModel())
             {
-                channel.QueueDeclare(queue: _rabbitMqLoggingConfig.QueueNameTrace,
+                channel.QueueDeclare(queue: queueName,
                                      durable: false,
                                      exclusive: false,
                                      autoDelete: false,
@@ -33,7 +33,7 @@ namespace RequestLoggingMiddlewareLib.RabbitMQ
 
 
                 await Task.Run(() => channel.BasicPublish(exchange: "",
-                                     routingKey: _rabbitMqLoggingConfig.QueueNameTrace,
+                                     routingKey: queueName,
                                      basicProperties: null,
                                      body: body));
 

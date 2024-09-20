@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
-using Refit;
 using RequestLoggingMiddlewareLib.Exceptions;
 using RequestLoggingMiddlewareLib.Interface;
 using RequestLoggingMiddlewareLib.Models;
@@ -13,14 +12,17 @@ namespace RequestLoggingMiddlewareLib.Middleware
         private readonly RequestDelegate _next;
         private readonly ILogger<ExceptionLoggingMiddleware> _logger;
         private readonly IRabbitMQPublisher<LogExceptionsEvent> _rabbitMQPublisher;
+        private readonly RabbitMqLoggingConfig _rabbitMqLoggingConfig;
 
         public ExceptionLoggingMiddleware(RequestDelegate next,
                                           ILogger<ExceptionLoggingMiddleware> logger,
-                                          IRabbitMQPublisher<LogExceptionsEvent> rabbitMQPublisher)
+                                          IRabbitMQPublisher<LogExceptionsEvent> rabbitMQPublisher,
+                                          RabbitMqLoggingConfig rabbitMqLoggingConfig)
         {
             _next = next ?? throw new ArgumentNullException(nameof(next));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _rabbitMQPublisher = rabbitMQPublisher ?? throw new ArgumentNullException(nameof(rabbitMQPublisher));
+            _rabbitMqLoggingConfig = rabbitMqLoggingConfig;
         }
 
         public async Task InvokeAsync(HttpContext context)
@@ -44,14 +46,14 @@ namespace RequestLoggingMiddlewareLib.Middleware
             {
                 Title = problemDetails.Title,
                 Detail = problemDetails.Detail,
-                StatusCode = problemDetails.Status,
+                StatusCode = problemDetails.Status ?? StatusCodes.Status500InternalServerError,
                 Type = problemDetails.Type,
-                Extensions = problemDetails.Extensions
+                Extensions = problemDetails.CustomExtensions
             };
 
             try
             {
-                await _rabbitMQPublisher.PublishMessageAsync(logExceptions);
+                await _rabbitMQPublisher.PublishMessageAsync(logExceptions, _rabbitMqLoggingConfig.QueueNameLog);
 
             }
             catch (Exception logEx)
@@ -61,51 +63,52 @@ namespace RequestLoggingMiddlewareLib.Middleware
 
             var messageJson = JsonConvert.SerializeObject(logExceptions);
 
-            context.Response.StatusCode = problemDetails.Status;
+            context.Response.StatusCode = problemDetails.Status ?? StatusCodes.Status500InternalServerError;
             context.Response.ContentType = "application/problem+json";
             await context.Response.WriteAsync(messageJson);
         }
 
 
-        private static ProblemDetails MapToProblemDetails(Exception exception)
+        private static CustomProblemDetails MapToProblemDetails(Exception exception)
         {
 
 #pragma warning disable CS8619 // Nullability of reference types in value doesn't match target type.
             return exception switch
             {
-                NotFoundException nf => new ProblemDetails
+                NotFoundException nf => new CustomProblemDetails
                 {
                     Title = "Not Found",
                     Detail = nf.Message,
                     Status = StatusCodes.Status404NotFound,
                     Type = "https://tools.ietf.org/html/rfc7231#section-6.5.4"
                 },
-                UnauthorizedAccessException ua => new ProblemDetails
+                UnauthorizedAccessException ua => new CustomProblemDetails
                 {
                     Title = "Unauthorized",
                     Detail = ua.Message,
                     Status = StatusCodes.Status401Unauthorized,
                     Type = "https://tools.ietf.org/html/rfc7235#section-3.1"
                 },
-                ValidationException ve => new ProblemDetails
+                ValidationException ve => new CustomProblemDetails
                 {
                     Title = "Validation Errors",
                     Detail = ve.Message,
                     Status = StatusCodes.Status400BadRequest,
                     Type = "https://tools.ietf.org/html/rfc7231#section-6.5.1",
-                    Extensions = new Dictionary<string, object?>
+                    CustomExtensions = new Dictionary<string, object?>
                     {
                         { "errors", ve.Errors }
                     }
+
                 },
-                ArgumentNullException an => new ProblemDetails
+                ArgumentNullException an => new CustomProblemDetails
                 {
                     Title = "Bad Request",
                     Detail = an.Message,
                     Status = StatusCodes.Status400BadRequest,
                     Type = "https://tools.ietf.org/html/rfc7231#section-6.5.1"
                 },
-                _ => new ProblemDetails
+                _ => new CustomProblemDetails
                 {
                     Title = "Internal Server Error",
                     Detail = exception.Message,
